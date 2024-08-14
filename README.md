@@ -125,3 +125,44 @@ Run Command:
 ```bash
 pip install -r requirements.txt
 ```
+## 3. Create logger functionality
+### `src\cnnClassifier\__init__.py`
+```python
+import os
+import sys
+import logging
+
+# Define the logging format string, including timestamp, log level, module, and message
+logging_str = "[%(asctime)s: %(levelname)s: %(module)s: %(message)s]"
+
+# Directory where the log file will be stored
+log_dir = "logs"
+
+# Path to the log file
+log_filepath = os.path.join(log_dir, "running_logs.log")
+
+# Create the log directory if it doesn't exist
+os.makedirs(log_dir, exist_ok=True)
+
+# Configure the logging settings
+logging.basicConfig(
+    level=logging.INFO,  # Set the logging level to INFO
+    format=logging_str,  # Use the defined format string
+    handlers=[
+        logging.FileHandler(log_filepath),  # Write logs to the specified log file
+        logging.StreamHandler(sys.stdout)  # Output logs to the console (stdout)
+    ]
+)
+
+# Create a logger instance with a custom name
+logger = logging.getLogger("cnnClassifierLogger")
+```
+### `main.py`
+```python
+from src.cnnClassifier import logger
+
+logger.info("Welcome to our custom log")
+```
+```bash
+python main.py
+```
