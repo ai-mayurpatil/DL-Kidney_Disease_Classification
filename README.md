@@ -487,5 +487,9 @@ except Exception as e:
         logger.exception(e)
         raise e
 ```
+Run Command:
+```bash
+python main.py
+```
  
 
