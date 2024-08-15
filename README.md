@@ -320,3 +320,172 @@ file_id
 prefix = 'https://drive.google.com/uc?/export=download&id='
 gdown.download(prefix+file_id, "kidney-CT-Scan-data.zip")
 ```
+## 7. Workflows for data igestion
+
+1. Update config.yaml
+2. Update secrets.yaml [Optional]
+3. Update params.yaml
+4. Update the entity
+5. Update the configuration manager in src config
+6. Update the components
+7. Update the pipeline 
+8. Update the main.py
+9. Update the dvc.yaml
+10. app.py
+### 1. `config.yaml`
+```python
+artifacts_root: artifacts
+
+
+data_ingestion:
+  root_dir: artifacts/data_ingestion
+  source_URL: https://drive.google.com/file/d/1vlhZ5c7abUKF8xXERIw6m9Te8fW7ohw3/view?usp=sharing
+  local_data_file: artifacts/data_ingestion/data.zip
+  unzip_dir: artifacts/data_ingestion
+```
+### 2. `params.yaml`
+```python
+key : val # For only not empty
+```
+### 3. `entity/config_entity.py`
+```python
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class DataIngestionConfig:
+    root_dir: Path
+    source_URL: str
+    local_data_file: Path
+    unzip_dir: Path
+```
+### 4. `configuration manager in src config`
+```python
+from cnnClassifier.constants import *
+from cnnClassifier.utils.common import read_yaml, create_directories
+from cnnClassifier.entity.config_entity import (DataIngestionConfig)
+
+class ConfigurationManager:
+    def __init__(
+        self,
+        config_filepath = CONFIG_FILE_PATH,
+        params_filepath = PARAMS_FILE_PATH):
+
+        self.config = read_yaml(config_filepath)
+        self.params = read_yaml(params_filepath)
+
+        create_directories([self.config.artifacts_root])
+
+
+    
+    def get_data_ingestion_config(self) -> DataIngestionConfig:
+        config = self.config.data_ingestion
+
+        create_directories([config.root_dir])
+
+        data_ingestion_config = DataIngestionConfig(
+            root_dir=config.root_dir,
+            source_URL=config.source_URL,
+            local_data_file=config.local_data_file,
+            unzip_dir=config.unzip_dir 
+        )
+
+        return data_ingestion_config
+```
+### 5. `components/data_ingestion.py`
+```python
+import os
+import zipfile
+import gdown
+from cnnClassifier import logger
+from cnnClassifier.utils.common import get_size
+from cnnClassifier.entity.config_entity import (DataIngestionConfig)
+
+class DataIngestion:
+    def __init__(self, config: DataIngestionConfig):
+        self.config = config
+
+    
+    def download_file(self)-> str:
+        '''
+        Fetch data from the url
+        '''
+
+        try: 
+            dataset_url = self.config.source_URL
+            zip_download_dir = self.config.local_data_file
+            os.makedirs("artifacts/data_ingestion", exist_ok=True)
+            logger.info(f"Downloading data from {dataset_url} into file {zip_download_dir}")
+
+            file_id = dataset_url.split("/")[-2]
+            prefix = 'https://drive.google.com/uc?/export=download&id='
+            gdown.download(prefix+file_id,zip_download_dir)
+
+            logger.info(f"Downloaded data from {dataset_url} into file {zip_download_dir}")
+
+        except Exception as e:
+            raise e
+        
+    
+
+    def extract_zip_file(self):
+        """
+        zip_file_path: str
+        Extracts the zip file into the data directory
+        Function returns None
+        """
+        unzip_path = self.config.unzip_dir
+        os.makedirs(unzip_path, exist_ok=True)
+        with zipfile.ZipFile(self.config.local_data_file, 'r') as zip_ref:
+            zip_ref.extractall(unzip_path)
+```
+### 6. `pipeline/stage_01_data_ingestion.py`
+```python
+from cnnClassifier.config.configuration import ConfigurationManager
+from cnnClassifier.components.data_ingestion import DataIngestion
+from cnnClassifier import logger
+
+STAGE_NAME = "Data Ingestion stage"
+
+
+class DataIngestionTrainingPipeline:
+    def __init__(self):
+        pass
+
+    def main(self):
+        config = ConfigurationManager()
+        data_ingestion_config = config.get_data_ingestion_config()
+        data_ingestion = DataIngestion(config=data_ingestion_config)
+        data_ingestion.download_file()
+        data_ingestion.extract_zip_file()
+
+
+
+if __name__ == '__main__':
+    try:
+        logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
+        obj = DataIngestionTrainingPipeline()
+        obj.main()
+        logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+    except Exception as e:
+        logger.exception(e)
+        raise e
+```
+### 7. `main.py`
+```python
+from cnnClassifier import logger
+from cnnClassifier.pipeline.stage_01_data_ingestion import DataIngestionTrainingPipeline
+
+STAGE_NAME = "Data Ingestion stage"
+try:
+   logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<") 
+   data_ingestion = DataIngestionTrainingPipeline()
+   data_ingestion.main()
+   logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+except Exception as e:
+        logger.exception(e)
+        raise e
+```
+ 
+
