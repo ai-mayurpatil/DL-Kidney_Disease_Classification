@@ -320,7 +320,7 @@ file_id
 prefix = 'https://drive.google.com/uc?/export=download&id='
 gdown.download(prefix+file_id, "kidney-CT-Scan-data.zip")
 ```
-## 7. Workflows for data igestion
+## 7. Workflows for data ingestion.
 
 1. Update config.yaml
 2. Update secrets.yaml [Optional]
