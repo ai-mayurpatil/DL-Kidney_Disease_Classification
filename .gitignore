@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# Zip data
+research/kidney-CT-Scan-data.zip
+
 # Distribution / packaging
 .Python
 build/
