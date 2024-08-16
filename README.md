@@ -491,5 +491,193 @@ Run Command:
 ```bash
 python main.py
 ```
- 
+## 8. Prebase model vgg16.
 
+1. Update config.yaml
+2. Update secrets.yaml [Optional]
+3. Update params.yaml
+4. Update the entity
+5. Update the configuration manager in src config
+6. Update the components
+7. Update the pipeline 
+8. Update the main.py
+9. Update the dvc.yaml
+10. app.py
+### 1. `config.yaml`
+```python
+prepare_base_model:
+  root_dir: artifacts/prepare_base_model
+  base_model_path: artifacts/prepare_base_model/base_model.h5
+  updated_base_model_path: artifacts/prepare_base_model/base_model_updated.h5
+```
+### 2. `params.yaml`
+```python
+AUGMENTATION: True
+IMAGE_SIZE: [224, 224, 3] # as per VGG 16 model
+BATCH_SIZE: 16
+INCLUDE_TOP: False
+EPOCHS: 1
+CLASSES: 2
+WEIGHTS: imagenet
+LEARNING_RATE: 0.01
+```
+### 3. `entity/config_entity.py`
+```python
+@dataclass(frozen=True)
+class PrepareBaseModelConfig:
+    root_dir: Path
+    base_model_path: Path
+    updated_base_model_path: Path
+    params_image_size: list
+    params_learning_rate: float
+    params_include_top: bool
+    params_weights: str
+    params_classes: int
+```
+### 4. `configuration manager in src config`
+```python
+def get_prepare_base_model_config(self) -> PrepareBaseModelConfig:
+        config = self.config.prepare_base_model
+        
+        create_directories([config.root_dir])
+
+        prepare_base_model_config = PrepareBaseModelConfig(
+            root_dir=Path(config.root_dir),
+            base_model_path=Path(config.base_model_path),
+            updated_base_model_path=Path(config.updated_base_model_path),
+            params_image_size=self.params.IMAGE_SIZE,
+            params_learning_rate=self.params.LEARNING_RATE,
+            params_include_top=self.params.INCLUDE_TOP,
+            params_weights=self.params.WEIGHTS,
+            params_classes=self.params.CLASSES
+        )
+
+        return prepare_base_model_config
+```
+ ### 5. `components/data_ingestion.py`
+```python
+import os
+import urllib.request as request
+from zipfile import ZipFile
+import tensorflow as tf
+from pathlib import Path
+from cnnClassifier.entity.config_entity import PrepareBaseModelConfig
+
+
+class PrepareBaseModel:
+    def __init__(self, config: PrepareBaseModelConfig):
+        self.config = config
+
+    
+    def get_base_model(self):
+        self.model = tf.keras.applications.vgg16.VGG16(
+            input_shape=self.config.params_image_size,
+            weights=self.config.params_weights,
+            include_top=self.config.params_include_top
+        )
+
+        self.save_model(path=self.config.base_model_path, model=self.model)
+
+    
+
+    @staticmethod
+    def _prepare_full_model(model, classes, freeze_all, freeze_till, learning_rate):
+        if freeze_all:
+            for layer in model.layers:
+                model.trainable = False
+        elif (freeze_till is not None) and (freeze_till > 0):
+            for layer in model.layers[:-freeze_till]:
+                model.trainable = False
+
+        flatten_in = tf.keras.layers.Flatten()(model.output)
+        prediction = tf.keras.layers.Dense(
+            units=classes,
+            activation="softmax"
+        )(flatten_in)
+
+        full_model = tf.keras.models.Model(
+            inputs=model.input,
+            outputs=prediction
+        )
+
+        full_model.compile(
+            optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate),
+            loss=tf.keras.losses.CategoricalCrossentropy(),
+            metrics=["accuracy"]
+        )
+
+        full_model.summary()
+        return full_model
+    
+    
+    def update_base_model(self):
+        self.full_model = self._prepare_full_model(
+            model=self.model,
+            classes=self.config.params_classes,
+            freeze_all=True,
+            freeze_till=None,
+            learning_rate=self.config.params_learning_rate
+        )
+
+        self.save_model(path=self.config.updated_base_model_path, model=self.full_model)
+
+    
+        
+    @staticmethod
+    def save_model(path: Path, model: tf.keras.Model):
+        model.save(path)
+```
+### 6. `pipeline/stage_01_data_ingestion.py`
+```python
+from cnnClassifier.config.configuration import ConfigurationManager
+from cnnClassifier.components.prepare_base_model import PrepareBaseModel
+from cnnClassifier import logger
+
+
+STAGE_NAME = "Prepare base model"
+
+
+class PrepareBaseModelTrainingPipeline:
+    def __init__(self):
+        pass
+
+    def main(self):
+        config = ConfigurationManager()
+        prepare_base_model_config = config.get_prepare_base_model_config()
+        prepare_base_model = PrepareBaseModel(config=prepare_base_model_config)
+        prepare_base_model.get_base_model()
+        prepare_base_model.update_base_model()
+
+
+    
+if __name__ == '__main__':
+    try:
+        logger.info(f"*******************")
+        logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
+        obj = PrepareBaseModelTrainingPipeline()
+        obj.main()
+        logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+    except Exception as e:
+        logger.exception(e)
+        raise e
+```
+### 7. `main.py`
+```python
+from cnnClassifier import logger
+from cnnClassifier.pipeline.stage_02_prepare_base_model import PrepareBaseModelTrainingPipeline
+
+STAGE_NAME = "Prepare base model"
+try: 
+   logger.info(f"*******************")
+   logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
+   prepare_base_model = PrepareBaseModelTrainingPipeline()
+   prepare_base_model.main()
+   logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+except Exception as e:
+        logger.exception(e)
+        raise e
+```
+Run Command:
+```bash
+python main.py
+```
