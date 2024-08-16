@@ -627,7 +627,7 @@ class PrepareBaseModel:
     def save_model(path: Path, model: tf.keras.Model):
         model.save(path)
 ```
-### 6. `pipeline/stage_01_data_ingestion.py`
+### 6. `pipeline/stage_02_prebase_model.py`
 ```python
 from cnnClassifier.config.configuration import ConfigurationManager
 from cnnClassifier.components.prepare_base_model import PrepareBaseModel
@@ -672,6 +672,209 @@ try:
    logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
    prepare_base_model = PrepareBaseModelTrainingPipeline()
    prepare_base_model.main()
+   logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+except Exception as e:
+        logger.exception(e)
+        raise e
+```
+Run Command:
+```bash
+python main.py
+```
+## 9. Model Training.
+
+1. Update config.yaml
+2. Update secrets.yaml [Optional]
+3. Update params.yaml
+4. Update the entity
+5. Update the configuration manager in src config
+6. Update the components
+7. Update the pipeline 
+8. Update the main.py
+9. Update the dvc.yaml
+10. app.py
+### 1. `config.yaml`
+```python
+training:
+  root_dir: artifacts/training
+  trained_model_path: artifacts/training/model.h5
+```
+### 2. `entity/config_entity.py`
+```python
+@dataclass(frozen=True)
+class TrainingConfig:
+    root_dir: Path
+    trained_model_path: Path
+    updated_base_model_path: Path
+    training_data: Path
+    params_epochs: int
+    params_batch_size: int
+    params_is_augmentation: bool
+    params_image_size: list
+```
+### 3. `configuration manager in src config`
+```python
+def get_training_config(self) -> TrainingConfig:
+        training = self.config.training
+        prepare_base_model = self.config.prepare_base_model
+        params = self.params
+        training_data = os.path.join(self.config.data_ingestion.unzip_dir, "kidney-ct-scan-image")
+        create_directories([
+            Path(training.root_dir)
+        ])
+
+        training_config = TrainingConfig(
+            root_dir=Path(training.root_dir),
+            trained_model_path=Path(training.trained_model_path),
+            updated_base_model_path=Path(prepare_base_model.updated_base_model_path),
+            training_data=Path(training_data),
+            params_epochs=params.EPOCHS,
+            params_batch_size=params.BATCH_SIZE,
+            params_is_augmentation=params.AUGMENTATION,
+            params_image_size=params.IMAGE_SIZE
+        )
+
+        return training_config
+```
+### 4. `components/model_training.py`
+```python
+import os
+import urllib.request as request
+from zipfile import ZipFile
+import tensorflow as tf
+import time
+from pathlib import Path
+from cnnClassifier.entity.config_entity import TrainingConfig
+
+
+class Training:
+    def __init__(self, config: TrainingConfig):
+        self.config = config
+
+    
+    def get_base_model(self):
+        self.model = tf.keras.models.load_model(
+            self.config.updated_base_model_path
+        )
+
+    def train_valid_generator(self):
+
+        datagenerator_kwargs = dict(
+            rescale = 1./255,
+            validation_split=0.20
+        )
+
+        dataflow_kwargs = dict(
+            target_size=self.config.params_image_size[:-1],
+            batch_size=self.config.params_batch_size,
+            interpolation="bilinear"
+        )
+
+        valid_datagenerator = tf.keras.preprocessing.image.ImageDataGenerator(
+            **datagenerator_kwargs
+        )
+
+        self.valid_generator = valid_datagenerator.flow_from_directory(
+            directory=self.config.training_data,
+            subset="validation",
+            shuffle=False,
+            **dataflow_kwargs
+        )
+
+        if self.config.params_is_augmentation:
+            train_datagenerator = tf.keras.preprocessing.image.ImageDataGenerator(
+                rotation_range=40,
+                horizontal_flip=True,
+                width_shift_range=0.2,
+                height_shift_range=0.2,
+                shear_range=0.2,
+                zoom_range=0.2,
+                **datagenerator_kwargs
+            )
+        else:
+            train_datagenerator = valid_datagenerator
+
+        self.train_generator = train_datagenerator.flow_from_directory(
+            directory=self.config.training_data,
+            subset="training",
+            shuffle=True,
+            **dataflow_kwargs
+        )
+
+    
+    @staticmethod
+    def save_model(path: Path, model: tf.keras.Model):
+        model.save(path)
+
+
+
+    
+    def train(self):
+        self.steps_per_epoch = self.train_generator.samples // self.train_generator.batch_size
+        self.validation_steps = self.valid_generator.samples // self.valid_generator.batch_size
+
+        self.model.fit(
+            self.train_generator,
+            epochs=self.config.params_epochs,
+            steps_per_epoch=self.steps_per_epoch,
+            validation_steps=self.validation_steps,
+            validation_data=self.valid_generator
+        )
+
+        self.save_model(
+            path=self.config.trained_model_path,
+            model=self.model
+        )
+```
+### 6. `pipeline/model_training.py`
+```python
+from cnnClassifier.config.configuration import ConfigurationManager
+from cnnClassifier.components.model_training import Training
+from cnnClassifier import logger
+
+
+
+STAGE_NAME = "Training"
+
+
+
+class ModelTrainingPipeline:
+    def __init__(self):
+        pass
+
+    def main(self):
+        config = ConfigurationManager()
+        training_config = config.get_training_config()
+        training = Training(config=training_config)
+        training.get_base_model()
+        training.train_valid_generator()
+        training.train()
+
+
+
+if __name__ == '__main__':
+    try:
+        logger.info(f"*******************")
+        logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
+        obj = ModelTrainingPipeline()
+        obj.main()
+        logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+    except Exception as e:
+        logger.exception(e)
+        raise e       
+```
+### 5. `main.py`
+```python
+from cnnClassifier import logger
+from cnnClassifier.pipeline.stage_02_prepare_base_model import PrepareBaseModelTrainingPipeline
+from cnnClassifier.pipeline.stage_03_model_training import ModelTrainingPipeline
+
+STAGE_NAME = "Training"
+try: 
+   logger.info(f"*******************")
+   logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
+   model_trainer = ModelTrainingPipeline()
+   model_trainer.main()
    logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
 except Exception as e:
         logger.exception(e)
