@@ -884,3 +884,189 @@ Run Command:
 ```bash
 python main.py
 ```
+## 9. Model evaluation with mlflow.
+## MLflow
+
+- [Documentation](https://mlflow.org/docs/latest/index.html)
+
+- [MLflow tutorial](https://youtu.be/qdcHHrsXA48?si=bD5vDS60akNphkem)
+
+##### cmd
+- mlflow ui
+
+### Dagshub
+[dagshub](https://dagshub.com/)
+
+MLFLOW_TRACKING_URI=https://dagshub.com/ai-mayurpatil/DL-Kidney_Disease_Classification.mlflow \
+MLFLOW_TRACKING_USERNAME=ai-mayurpatil \
+MLFLOW_TRACKING_PASSWORD=6824692c47a369aa6f9eac5b10041d5c8edbcef0 \
+python script.py
+
+Run this to export as env variables:
+
+```bash
+export MLFLOW_TRACKING_URI="https://dagshub.com/ai-mayurpatil/DL-Kidney_Disease_Classification.mlflow"
+
+export MLFLOW_TRACKING_USERNAME=ai-mayurpatil 
+
+export MLFLOW_TRACKING_PASSWORD=6824692c47a369aa6f9eac5b10041d5c8edbcef0
+
+```
+### 1. `entity/config_entity.py`
+```python
+@dataclass(frozen=True)
+class EvaluationConfig:
+    path_of_model: Path
+    training_data: Path
+    all_params: dict
+    mlflow_uri: str
+    params_image_size: list
+    params_batch_size: int
+```
+### 2. `configuration manager in src config`
+```python
+def get_evaluation_config(self) -> EvaluationConfig:
+        eval_config = EvaluationConfig(
+            path_of_model="artifacts/training/model.h5",
+            training_data="artifacts/data_ingestion/kidney-ct-scan-image",
+            mlflow_uri="https://dagshub.com/ai-mayurpatil/DL-Kidney_Disease_Classification.mlflow",
+            all_params=self.params,
+            params_image_size=self.params.IMAGE_SIZE,
+            params_batch_size=self.params.BATCH_SIZE
+        )
+        return eval_config
+```
+### 3. `components/model_evalution_mlflow.py`
+```python
+import tensorflow as tf
+from pathlib import Path
+import mlflow
+import mlflow.keras
+from urllib.parse import urlparse
+from cnnClassifier.entity.config_entity import EvaluationConfig
+from cnnClassifier.utils.common import read_yaml, create_directories,save_json
+
+
+class Evaluation:
+    def __init__(self, config: EvaluationConfig):
+        self.config = config
+
+    
+    def _valid_generator(self):
+
+        datagenerator_kwargs = dict(
+            rescale = 1./255,
+            validation_split=0.30
+        )
+
+        dataflow_kwargs = dict(
+            target_size=self.config.params_image_size[:-1],
+            batch_size=self.config.params_batch_size,
+            interpolation="bilinear"
+        )
+
+        valid_datagenerator = tf.keras.preprocessing.image.ImageDataGenerator(
+            **datagenerator_kwargs
+        )
+
+        self.valid_generator = valid_datagenerator.flow_from_directory(
+            directory=self.config.training_data,
+            subset="validation",
+            shuffle=False,
+            **dataflow_kwargs
+        )
+
+
+    @staticmethod
+    def load_model(path: Path) -> tf.keras.Model:
+        return tf.keras.models.load_model(path)
+    
+
+    def evaluation(self):
+        self.model = self.load_model(self.config.path_of_model)
+        self._valid_generator()
+        self.score = self.model.evaluate(self.valid_generator)
+        self.save_score()
+
+    def save_score(self):
+        scores = {"loss": self.score[0], "accuracy": self.score[1]}
+        save_json(path=Path("scores.json"), data=scores)
+
+    
+    def log_into_mlflow(self):
+        mlflow.set_registry_uri(self.config.mlflow_uri)
+        tracking_url_type_store = urlparse(mlflow.get_tracking_uri()).scheme
+        
+        with mlflow.start_run():
+            mlflow.log_params(self.config.all_params)
+            mlflow.log_metrics(
+                {"loss": self.score[0], "accuracy": self.score[1]}
+            )
+            # Model registry does not work with file store
+            if tracking_url_type_store != "file":
+
+                # Register the model
+                # There are other ways to use the Model Registry, which depends on the use case,
+                # please refer to the doc for more information:
+                # https://mlflow.org/docs/latest/model-registry.html#api-workflow
+                mlflow.keras.log_model(self.model, "model", registered_model_name="VGG16Model")
+            else:
+                mlflow.keras.log_model(self.model, "model")
+```
+### 4. `pipeline/stage_04_model_evalution.py`
+```python
+from cnnClassifier.config.configuration import ConfigurationManager
+from cnnClassifier.components.model_evaluation_mlflow import Evaluation
+from cnnClassifier import logger
+
+
+
+STAGE_NAME = "Evaluation stage"
+
+
+class EvaluationPipeline:
+    def __init__(self):
+        pass
+
+    def main(self):
+        config = ConfigurationManager()
+        eval_config = config.get_evaluation_config()
+        evaluation = Evaluation(eval_config)
+        evaluation.evaluation()
+        evaluation.save_score()
+        evaluation.log_into_mlflow()
+
+
+
+
+if __name__ == '__main__':
+    try:
+        logger.info(f"*******************")
+        logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
+        obj = EvaluationPipeline()
+        obj.main()
+        logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+    except Exception as e:
+        logger.exception(e)
+        raise e             
+```
+### 5. `main.py`
+```python
+from cnnClassifier.pipeline.stage_04_model_evalution import EvaluationPipeline
+
+STAGE_NAME = "Evaluation stage"
+try:
+   logger.info(f"*******************")
+   logger.info(f">>>>>> stage {STAGE_NAME} started <<<<<<")
+   model_evalution = EvaluationPipeline()
+   model_evalution.main()
+   logger.info(f">>>>>> stage {STAGE_NAME} completed <<<<<<\n\nx==========x")
+
+except Exception as e:
+        logger.exception(e)
+        raise e
+```
+Run Command:
+```bash
+python main.py
+```
